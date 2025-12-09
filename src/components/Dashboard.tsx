@@ -43,10 +43,10 @@ export default function Dashboard() {
   const [user, setUser] = useState<User | null>(null);
   const [stats, setStats] = useState<MonthlyStats | null>(null);
   const [loading, setLoading] = useState(true);
-  const [duration, setDuration] = useState("");
-  const [date, setDate] = useState<Date | undefined>(new Date());
-  const [submitting, setSubmitting] = useState(false);
   const [currentMonth, setCurrentMonth] = useState(new Date());
+  
+  // State for popover interaction
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const fetchData = async () => {
     try {
@@ -72,31 +72,85 @@ export default function Dashboard() {
     fetchData();
   }, [currentMonth]);
 
-  const handleLogWalk = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!user || !duration || !date) return;
+  const handleLogClick = async (dateStr: string, duration: number, type: "STANDARD" | "SUPER" | "OFF") => {
+    if (!user) return;
 
-    setSubmitting(true);
+    // Check OFF day limit
+    if (type === "OFF" && stats) {
+        // Find the week this date belongs to
+        const clickDate = new Date(dateStr);
+        // We need to match it to a week in stats
+        // A simple way is to check the days in each week
+        let currentOffs = 0;
+        let alreadyOff = false;
+
+        for (const week of stats.weeks) {
+            const dayFound = week.days.find(d => d.date === dateStr);
+            if (dayFound) {
+                // Count OFFs in this week logic is tricky because "offDaysUsed" in stats 
+                // might include this day if it was already OFF.
+                // But week.offDaysUsed is calculated from the backend.
+                // Let's count manually from the days array to be sure what's CURRENTLY visible/loaded.
+                
+                // Actually, week.offDaysUsed is what the backend calculated.
+                // If I am changing THIS day to OFF:
+                // 1. If it was NOT OFF before, I need to check if offDaysUsed < 2.
+                // 2. If it WAS OFF before, then I'm just re-confirming, so it's fine.
+                
+                alreadyOff = dayFound.type === "OFF";
+                currentOffs = week.offDaysUsed;
+                break;
+            }
+        }
+
+        if (!alreadyOff && currentOffs >= 2) {
+             toast.error("Haftalık izin (2 gün) hakkınız doldu!");
+             return;
+        }
+    }
+
+    setIsSubmitting(true);
     try {
       const res = await fetch("/api/walk", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           userId: user.id,
-          date: date.toISOString(),
-          duration: Number(duration),
+          date: dateStr,
+          duration,
+          type
         }),
       });
 
       if (!res.ok) throw new Error("Failed");
-
-      toast.success("Yürüyüş kaydedildi!");
-      setDuration("");
-      fetchData();
+      
+      toast.success("Güncellendi!");
+      await fetchData();
     } catch (error) {
-      toast.error("Kaydetme hatası");
+      toast.error("Hata oluştu");
     } finally {
-      setSubmitting(false);
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleDelete = async (dateStr: string) => {
+    if (!user) return;
+    setIsSubmitting(true);
+    try {
+        // Using POST with specific action or DELETE method if we implement it.
+        // Let's implement a DELETE endpoint or use Query param. 
+        // Plan said /api/walk/delete or similar. Let's send a DELETE request to /api/walk
+        const res = await fetch(`/api/walk?userId=${user.id}&date=${dateStr}`, {
+            method: "DELETE",
+        });
+
+        if (!res.ok) throw new Error("Failed");
+        toast.success("Silindi!");
+        await fetchData();
+    } catch (error) {
+        toast.error("Silinemedi");
+    } finally {
+        setIsSubmitting(false);
     }
   };
 
@@ -144,16 +198,16 @@ export default function Dashboard() {
               </Button>
             </div>
           </CardHeader>
-          <CardContent className="p-6">
-            <div className="grid grid-cols-7 gap-3 text-center mb-4">
+          <CardContent className="p-3 sm:p-6">
+            <div className="grid grid-cols-7 gap-1 sm:gap-3 text-center mb-4">
               {["Pzt", "Sal", "Çar", "Per", "Cum", "Cmt", "Paz"].map((day) => (
-                <div key={day} className="text-xs font-bold text-stone-400 uppercase tracking-wider">{day}</div>
+                <div key={day} className="text-[9px] sm:text-xs font-bold text-stone-400 uppercase tracking-wider">{day}</div>
               ))}
             </div>
             
             <div className="space-y-4">
               {stats?.weeks.map((week, wIndex) => (
-                <div key={wIndex} className="grid grid-cols-7 gap-3">
+                <div key={wIndex} className="grid grid-cols-7 gap-1 sm:gap-3">
                   {week.days.map((day, dIndex) => {
                     let bg = "bg-stone-50 hover:bg-stone-100";
                     let text = "text-stone-400";
@@ -174,9 +228,10 @@ export default function Dashboard() {
                       icon = "🚀";
                     }
                     else if (day.type === "OFF") { 
-                      bg = "bg-amber-100"; 
+                      bg = "bg-amber-100 border-amber-200"; 
                       text = "text-amber-600"; 
                       border = "border-amber-200";
+                      shadow = "shadow-lg shadow-amber-200"; 
                       icon = "☕";
                     }
                     else if (day.type === "PENALTY") { 
@@ -189,31 +244,89 @@ export default function Dashboard() {
                     // Check if day belongs to current month visually
                     const isCurrentMonth = new Date(day.date).getMonth() === currentMonth.getMonth();
                     const opacity = isCurrentMonth ? "opacity-100" : "opacity-30 grayscale";
+                    
+                    const isFuture = new Date(day.date) > new Date();
 
                     return (
-                      <div 
-                        key={`${wIndex}-${dIndex}`} 
-                        className={cn(
-                          "aspect-square rounded-2xl flex flex-col items-center justify-center relative transition-all duration-300 group border-2",
-                          bg, text, border, shadow, opacity
-                        )}
-                      >
-                        <span className="text-[10px] absolute top-1 left-2 font-medium opacity-60">
-                          {new Date(day.date).getDate()}
-                        </span>
-                        
-                        {icon && <span className="text-lg mb-1">{icon}</span>}
-                        
-                        <span className="text-xs font-bold">
-                          {day.earnings !== 0 ? (day.earnings > 0 ? `+${day.earnings}` : day.earnings) : ""}
-                        </span>
-                        
-                        {day.duration > 0 && (
-                          <span className="text-[9px] bg-black/10 px-1.5 py-0.5 rounded-full mt-1">
-                            {day.duration}dk
-                          </span>
-                        )}
-                      </div>
+                        <Popover key={`${wIndex}-${dIndex}`}>
+                            <PopoverTrigger asChild>
+                                <button
+                                    disabled={isFuture} 
+                                    className={cn(
+                                    "aspect-square rounded-xl sm:rounded-2xl flex flex-col items-center justify-center relative transition-all duration-300 group border-2 w-full",
+                                    bg, text, border, shadow, opacity,
+                                    isFuture ? "cursor-not-allowed" : "cursor-pointer hover:scale-105 active:scale-95"
+                                    )}
+                                >
+                                    <span className="text-[8px] sm:text-[10px] absolute top-0.5 left-0.5 sm:top-1 sm:left-2 font-medium opacity-60">
+                                    {new Date(day.date).getDate()}
+                                    </span>
+                                    
+                                    {icon && <span className="text-sm sm:text-lg mb-0.5 sm:mb-1">{icon}</span>}
+                                    
+                                    <span className="text-[9px] sm:text-xs font-bold leading-none">
+                                    {day.type === "OFF" ? "PAS" : (day.earnings !== 0 ? (day.earnings > 0 ? `+${day.earnings}` : day.earnings) : "")}
+                                    </span>
+                                    
+                                    {/* Render distinct badge or invisible spacer to maintain vertical height consistency */}
+                                    {day.duration > 0 ? (
+                                    <span className="text-[7px] sm:text-[9px] bg-black/10 px-1 py-0.5 sm:px-1.5 rounded-full mt-0.5 sm:mt-1 leading-none">
+                                        {day.duration}dk
+                                    </span>
+                                    ) : (
+                                        // Invisible spacer for alignment if it's OFF or PENALTY (and has text)
+                                        (day.type === "OFF" || day.type === "PENALTY") && (
+                                            <span className="text-[7px] sm:text-[9px] px-1 py-0.5 mt-0.5 sm:mt-1 leading-none opacity-0 select-none">
+                                                --
+                                            </span>
+                                        )
+                                    )}
+                                </button>
+                            </PopoverTrigger>
+                            {!isFuture && (
+                                <PopoverContent className="w-60 p-4 rounded-xl shadow-xl border-stone-100">
+                                    <div className="space-y-3">
+                                        <div className="text-center font-bold text-stone-600 border-b pb-2 mb-2">
+                                            {format(new Date(day.date), "d MMMM yyyy", { locale: tr })}
+                                        </div>
+                                        <div className="grid grid-cols-1 gap-2">
+                                            <Button 
+                                                onClick={() => handleLogClick(day.date, 45, "STANDARD")}
+                                                variant="outline" 
+                                                className="justify-start gap-2 h-auto py-3 border-stone-200 hover:bg-green-50 hover:text-green-700 hover:border-green-200"
+                                            >
+                                                <span>✅</span> 45 Dakika (Standart)
+                                            </Button>
+                                            <Button 
+                                                onClick={() => handleLogClick(day.date, 60, "SUPER")}
+                                                variant="outline" 
+                                                className="justify-start gap-2 h-auto py-3 border-stone-200 hover:bg-purple-50 hover:text-purple-700 hover:border-purple-200"
+                                            >
+                                                <span>🚀</span> 60 Dakika (Süper)
+                                            </Button>
+                                            <Button 
+                                                onClick={() => handleLogClick(day.date, 0, "OFF")}
+                                                variant="outline" 
+                                                className="justify-start gap-2 h-auto py-3 border-stone-200 hover:bg-amber-50 hover:text-amber-700 hover:border-amber-200"
+                                            >
+                                                <span>☕</span> Off Gün (Pas)
+                                            </Button>
+                                        </div>
+                                        {(day.walked || day.type === "OFF") && (
+                                            <div className="pt-2 border-t mt-2">
+                                                <Button 
+                                                    onClick={() => handleDelete(day.date)}
+                                                    variant="ghost" 
+                                                    className="w-full text-red-500 hover:text-red-600 hover:bg-red-50"
+                                                >
+                                                    Temizle / Sil
+                                                </Button>
+                                            </div>
+                                        )}
+                                    </div>
+                                </PopoverContent>
+                            )}
+                        </Popover>
                     );
                   })}
                 </div>
@@ -223,60 +336,6 @@ export default function Dashboard() {
         </Card>
 
         <div className="space-y-8">
-          <Card className="border-none shadow-xl bg-white/80 backdrop-blur-sm rounded-3xl">
-            <CardHeader>
-              <CardTitle className="text-stone-700">Aktivite Gir</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <form onSubmit={handleLogWalk} className="space-y-4">
-                <div className="space-y-2">
-                  <Label className="text-stone-600">Tarih</Label>
-                  <Popover>
-                    <PopoverTrigger asChild>
-                      <Button
-                        variant={"outline"}
-                        className={cn(
-                          "w-full justify-start text-left font-normal bg-stone-50 border-stone-200 hover:bg-stone-100",
-                          !date && "text-muted-foreground"
-                        )}
-                      >
-                        <CalendarIcon className="mr-2 h-4 w-4" />
-                        {date ? format(date, "PPP", { locale: tr }) : <span>Tarih seçin</span>}
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-auto p-0">
-                      <Calendar
-                        mode="single"
-                        selected={date}
-                        onSelect={setDate}
-                        initialFocus
-                        locale={tr}
-                        weekStartsOn={1}
-                      />
-                    </PopoverContent>
-                  </Popover>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="duration" className="text-stone-600">Süre (dakika)</Label>
-                  <Input 
-                    id="duration" 
-                    type="number" 
-                    placeholder="örn. 45" 
-                    value={duration} 
-                    onChange={(e) => setDuration(e.target.value)}
-                    min="1"
-                    className="bg-stone-50 border-stone-200 focus:ring-green-500"
-                  />
-                </div>
-                <Button type="submit" className="w-full bg-stone-800 hover:bg-stone-900 text-white font-bold rounded-xl py-6" disabled={submitting}>
-                  {submitting ? <Loader2 className="animate-spin mr-2" /> : <Footprints className="mr-2" />}
-                  Kaydet
-                </Button>
-              </form>
-            </CardContent>
-          </Card>
-
           <Card className="border-none shadow-lg bg-stone-900 text-stone-200 rounded-3xl overflow-hidden relative">
             <div className="absolute top-0 right-0 w-32 h-32 bg-green-500/20 rounded-full blur-3xl -mr-10 -mt-10"></div>
             <CardHeader>

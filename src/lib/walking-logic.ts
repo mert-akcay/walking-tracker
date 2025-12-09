@@ -80,7 +80,12 @@ export function calculateStatsForRange(logs: WalkLog[], startDate: Date, endDate
         dayStat.walked = true;
         dayStat.duration = log.duration;
 
-        if (log.duration >= 60 && !weekStats.superWalkUsed) {
+        if (log.type === "OFF") {
+            // Explicit OFF logged by user
+            dayStat.type = "OFF";
+            weekStats.offDaysUsed++;
+            dayStat.earnings = 0;
+        } else if (log.duration >= 60 && !weekStats.superWalkUsed) {
           dayStat.earnings = 150;
           dayStat.type = "SUPER";
           weekStats.superWalkUsed = true;
@@ -88,12 +93,12 @@ export function calculateStatsForRange(logs: WalkLog[], startDate: Date, endDate
           dayStat.earnings = 100;
           dayStat.type = "STANDARD";
         } else {
-          // Short walk, treat as not walked for earnings
+          // Short walk or explicit small walk
           dayStat.walked = false; 
         }
       }
 
-      if (!dayStat.walked) {
+      if (!dayStat.walked && dayStat.type === "NONE") { // Only if not set by log above
         // Check if future
         const today = new Date();
         today.setHours(0, 0, 0, 0);
@@ -103,14 +108,10 @@ export function calculateStatsForRange(logs: WalkLog[], startDate: Date, endDate
           dayStat.type = "NONE";
           dayStat.earnings = 0;
         } else {
-          if (weekStats.offDaysUsed < 2) {
-            dayStat.type = "OFF";
-            weekStats.offDaysUsed++;
-            dayStat.earnings = 0;
-          } else {
-            dayStat.type = "PENALTY";
-            dayStat.earnings = -200;
-          }
+          // Default behavior for past days with no log: PENALTY.
+          // User must explicitly choose OFF.
+          dayStat.type = "PENALTY";
+          dayStat.earnings = -200;
         }
       }
 

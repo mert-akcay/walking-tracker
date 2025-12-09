@@ -4,34 +4,38 @@ import { NextResponse } from "next/server";
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { userId, date, duration } = body;
+    const { userId, date, duration, type } = body;
 
-    if (!userId || !date || duration === undefined) {
+    if (!userId || !date) {
       return NextResponse.json({ error: "Missing fields" }, { status: 400 });
     }
 
-    // Create log
-    // We don't calculate earnings here yet, we do it on read for the week
-    // But we can store the "raw" earnings if we wanted.
-    // For now, just store the log.
+    const logDate = new Date(date);
     
-    // Check if log already exists for this day?
-    // User might walk multiple times?
-    // "her 45 dk yürüyüş yaptığı gün için".
-    // Usually implies 1 per day counts.
-    // If I walk 30 min + 20 min = 50 min?
-    // I'll assume total duration per day matters.
-    // So I should probably upsert or sum?
-    // Let's assume user logs "a walk".
-    // I'll store individual logs. The logic will sum them up by day.
-    
+    // Define start and end of this day to safely remove duplicates
+    const startOfDay = new Date(logDate);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(logDate);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    // Remove existing logs for this day to ensure single entry/status per day
+    await prisma.walkLog.deleteMany({
+      where: {
+        userId,
+        date: {
+          gte: startOfDay,
+          lte: endOfDay,
+        },
+      },
+    });
+
     const log = await prisma.walkLog.create({
       data: {
         userId,
-        date: new Date(date),
+        date: logDate,
         duration: Number(duration),
-        type: Number(duration) >= 60 ? "SUPER" : Number(duration) >= 45 ? "STANDARD" : "SHORT",
-        earnings: 0, // Calculated dynamically
+        type: type || (Number(duration) >= 60 ? "SUPER" : Number(duration) >= 45 ? "STANDARD" : "SHORT"),
+        earnings: 0, // Calculated dynamically in stats
       },
     });
 
@@ -40,4 +44,37 @@ export async function POST(request: Request) {
     console.error(error);
     return NextResponse.json({ error: "Failed to log walk" }, { status: 500 });
   }
+}
+
+export async function DELETE(request: Request) {
+    try {
+        const { searchParams } = new URL(request.url);
+        const userId = searchParams.get("userId");
+        const dateStr = searchParams.get("date"); // YYYY-MM-DD or ISO
+
+        if (!userId || !dateStr) {
+            return NextResponse.json({ error: "Missing userId or date" }, { status: 400 });
+        }
+
+        const logDate = new Date(dateStr);
+        const startOfDay = new Date(logDate);
+        startOfDay.setHours(0, 0, 0, 0);
+        const endOfDay = new Date(logDate);
+        endOfDay.setHours(23, 59, 59, 999);
+
+        await prisma.walkLog.deleteMany({
+            where: {
+                userId,
+                date: {
+                    gte: startOfDay,
+                    lte: endOfDay,
+                },
+            },
+        });
+
+        return NextResponse.json({ success: true });
+    } catch (error) {
+        console.error(error);
+        return NextResponse.json({ error: "Failed to delete" }, { status: 500 });
+    }
 }
